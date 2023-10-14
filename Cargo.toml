@@ -1,0 +1,32 @@
+[package]
+name = "bevy_state_matching_prototype"
+description = "A plugin providing access to state matching in bevy in advance of actual integration"
+version = "0.1.0"
+authors = ["Lee-Orr"]
+homepage = "https://lee-orr.github.io/bevy-state-match-prototype"
+repository = "https://github.com/lee-orr/bevy-state-match-prototype"
+documentation = "https://lee-orr.github.io/bevy-gstate-match-prototype"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+categories = ["games", "game-development"]
+keywords = ["bevy"]
+exclude = ["assets/**/*", "tools/**/*", ".github/**/*"]
+resolver = "2"
+
+[workspace]
+members = ["./", "tools/ci"]
+
+[features]
+
+[dependencies]
+bevy = { git = "https://github.com/bevyengine/bevy", default-features = false }
+bevy_state_matching_prototype_macros = { path = "macros", version = "0.1.0" }
+
+[dev-dependencies]
+bevy = { git = "https://github.com/bevyengine/bevy", default-features = true }
+
+
+[lib]
+name = "bevy_state_matching_prototype"
+path = "src/lib.rs"

@@ -1,0 +1,16 @@
+[package]
+name = "bevy_state_matching_prototype_macros"
+version = "0.1.0"
+description = "State Matching Macros Macros"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+bevy_macro_utils = { git = "github.com/bevyengine/bevy" }
+
+syn = { version = "2.0", features = ["extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
