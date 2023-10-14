@@ -1,23 +1,8 @@
 extern crate proc_macro;
 
-mod component;
-mod fetch;
-mod set;
 mod state_matchers;
-mod states;
-
-use crate::{fetch::derive_world_query_impl, set::derive_set};
-use bevy_macro_utils::{
-    derive_boxed_label, ensure_no_collision, get_named_struct_fields, BevyManifest,
-};
 use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::{format_ident, quote};
 use state_matchers::state_matches_macro;
-use syn::{
-    parse_macro_input, parse_quote, punctuated::Punctuated, spanned::Spanned, token::Comma,
-    ConstParam, DeriveInput, GenericParam, Ident, Index, TypeParam,
-};
 
 /// Run a system only if the current state matches the provided expressions.
 ///

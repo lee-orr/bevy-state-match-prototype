@@ -312,8 +312,7 @@ pub fn state_matches_macro(match_result: MatchMacroResult) -> proc_macro::TokenS
 }
 
 fn generate_match_function(state_type: &Path, matchers: &[(bool, MatchTypes)]) -> TokenStream {
-    let mut module_path = bevy_ecs_path();
-    module_path.segments.push(format_ident!("schedule").into());
+    let module_path = bevy_ecs_path();
 
     let tokens = matchers
         .iter()

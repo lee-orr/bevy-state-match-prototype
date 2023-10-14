@@ -15,9 +15,10 @@ exclude = ["assets/**/*", "tools/**/*", ".github/**/*"]
 resolver = "2"
 
 [workspace]
-members = ["./", "tools/ci"]
+members = ["tools/ci"]
 
 [features]
+conditional_states = []
 
 [dependencies]
 bevy = { git = "https://github.com/bevyengine/bevy", default-features = false }
@@ -30,3 +31,20 @@ bevy = { git = "https://github.com/bevyengine/bevy", default-features = true }
 [lib]
 name = "bevy_state_matching_prototype"
 path = "src/lib.rs"
+
+
+[[example]]
+name = "black_box_state"
+path = "examples/black_box_state.rs"
+
+[[example]]
+name = "nested_state"
+path = "examples/nested_state.rs"
+
+[[example]]
+name = "struct_state"
+path = "examples/struct_state.rs"
+
+[[example]]
+name = "state_transitions"
+path = "examples/state_transitions.rs"

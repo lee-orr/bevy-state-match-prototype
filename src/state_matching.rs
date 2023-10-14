@@ -1,11 +1,12 @@
-use super::{ActiveTransition, State, States};
-use crate::{
-    archetype::ArchetypeComponentId,
-    change_detection::Res,
-    component::ComponentId,
-    query::Access,
-    system::{IntoSystem, ReadOnlySystem, System},
-    world::unsafe_world_cell::UnsafeWorldCell,
+use super::{ActiveTransition, MatchableState};
+use bevy::{
+    ecs::{
+        archetype::ArchetypeComponentId,
+        component::{self, ComponentId},
+        query::Access,
+        world::unsafe_world_cell::UnsafeWorldCell,
+    },
+    prelude::*,
 };
 pub use bevy_state_matching_prototype_macros::state_matches;
 use std::{borrow::Cow, marker::PhantomData};
@@ -36,12 +37,12 @@ impl From<bool> for MatchesStateTransition {
 /// A wrapper around a `StateMatcher` that ignores the state matcher's
 /// `match_state_transition`, and instead always returns a
 /// `TransitionMatches` if the main state matches.
-pub struct EveryTransition<S: States, Sm: StateMatcher<S, Marker>, Marker: 'static>(
+pub struct EveryTransition<S: MatchableState, Sm: StateMatcher<S, Marker>, Marker: 'static>(
     pub Sm,
     PhantomData<Box<dyn Send + Sync + 'static + Fn(S) -> Marker>>,
 );
 
-impl<S: States, Marker: Send + Sync + 'static, Sm: StateMatcher<S, Marker>>
+impl<S: MatchableState, Marker: Send + Sync + 'static, Sm: StateMatcher<S, Marker>>
     sealed::InternalStateMatcher<S, ()> for EveryTransition<S, Sm, Marker>
 {
     fn match_state(&self, state: &S) -> bool {
@@ -62,12 +63,12 @@ impl<S: States, Marker: Send + Sync + 'static, Sm: StateMatcher<S, Marker>>
 ///
 /// When `Exiting`, the `main` would become the incoming state
 /// When `Entering`, the `main` would become the outgoing state
-pub struct InvertTransition<S: States, Sm: StateMatcher<S, Marker>, Marker: 'static>(
+pub struct InvertTransition<S: MatchableState, Sm: StateMatcher<S, Marker>, Marker: 'static>(
     Sm,
     PhantomData<Box<dyn Send + Sync + 'static + Fn(S) -> Marker>>,
 );
 
-impl<S: States, Marker, Sm: StateMatcher<S, Marker>> sealed::InternalStateMatcher<S, ()>
+impl<S: MatchableState, Marker, Sm: StateMatcher<S, Marker>> sealed::InternalStateMatcher<S, ()>
     for InvertTransition<S, Sm, Marker>
 {
     fn match_state(&self, state: &S) -> bool {
@@ -91,7 +92,7 @@ impl<S: States, Marker, Sm: StateMatcher<S, Marker>> sealed::InternalStateMatche
 /// result unless it is `NoMatch`. In that case, it will return the result of the second
 /// state matcher.
 pub struct CombineStateMatchers<
-    S: States,
+    S: MatchableState,
     Sm1: StateMatcher<S, M1>,
     M1: 'static,
     Sm2: StateMatcher<S, M2>,
@@ -102,8 +103,13 @@ pub struct CombineStateMatchers<
     PhantomData<Box<dyn Send + Sync + 'static + Fn(S) -> (M1, M2)>>,
 );
 
-impl<S: States, Sm1: StateMatcher<S, M1>, M1: 'static, Sm2: StateMatcher<S, M2>, M2: 'static>
-    sealed::InternalStateMatcher<S, (M1, M2)> for CombineStateMatchers<S, Sm1, M1, Sm2, M2>
+impl<
+        S: MatchableState,
+        Sm1: StateMatcher<S, M1>,
+        M1: 'static,
+        Sm2: StateMatcher<S, M2>,
+        M2: 'static,
+    > sealed::InternalStateMatcher<S, (M1, M2)> for CombineStateMatchers<S, Sm1, M1, Sm2, M2>
 {
     fn match_state(&self, state: &S) -> bool {
         self.0.match_state(state) || self.1.match_state(state)
@@ -122,10 +128,61 @@ impl<S: States, Sm1: StateMatcher<S, M1>, M1: 'static, Sm2: StateMatcher<S, M2>,
     }
 }
 
+/// A struct that takes two `StateMatcher`s, and evaluates them both
+/// Always returns the least match from either
+pub struct AndStateMatchers<
+    S: MatchableState,
+    Sm1: StateMatcher<S, M1>,
+    M1: 'static,
+    Sm2: StateMatcher<S, M2>,
+    M2: 'static,
+>(
+    pub Sm1,
+    pub Sm2,
+    PhantomData<Box<dyn Send + Sync + 'static + Fn(S) -> (M1, M2)>>,
+);
+
+impl<
+        S: MatchableState,
+        Sm1: StateMatcher<S, M1>,
+        M1: 'static,
+        Sm2: StateMatcher<S, M2>,
+        M2: 'static,
+    > sealed::InternalStateMatcher<S, (M1, M2)> for AndStateMatchers<S, Sm1, M1, Sm2, M2>
+{
+    fn match_state(&self, state: &S) -> bool {
+        self.0.match_state(state) && self.1.match_state(state)
+    }
+
+    fn match_state_transition(
+        &self,
+        main: Option<&S>,
+        secondary: Option<&S>,
+    ) -> MatchesStateTransition {
+        let result_1 = self.0.match_state_transition(main, secondary);
+        let result_2 = self.1.match_state_transition(main, secondary);
+        match (result_1, result_2) {
+            (
+                MatchesStateTransition::TransitionMatches,
+                MatchesStateTransition::TransitionMatches,
+            ) => MatchesStateTransition::TransitionMatches,
+            (MatchesStateTransition::TransitionMatches, MatchesStateTransition::MainMatches) => {
+                MatchesStateTransition::MainMatches
+            }
+            (MatchesStateTransition::MainMatches, MatchesStateTransition::TransitionMatches) => {
+                MatchesStateTransition::MainMatches
+            }
+            (MatchesStateTransition::MainMatches, MatchesStateTransition::MainMatches) => {
+                MatchesStateTransition::MainMatches
+            }
+            _ => MatchesStateTransition::NoMatch,
+        }
+    }
+}
 pub(crate) mod sealed {
     use std::marker::PhantomData;
 
-    use crate::schedule::States;
+    use bevy::ecs::schedule::States;
 
     use super::MatchesStateTransition;
 
@@ -186,7 +243,7 @@ use sealed::InternalStateMatcher;
 /// - `Fn(&Self, &Self) -> MatchesStateTransition`
 /// - `Fn(&Self, Option<&Self>) -> MatchesStateTransition`
 /// - `Fn(Option<&Self>, Option<&Self>) -> MatchesStateTransition`
-pub trait StateMatcher<S: States, Marker>: InternalStateMatcher<S, Marker> {
+pub trait StateMatcher<S: MatchableState, Marker>: InternalStateMatcher<S, Marker> {
     /// Ensures that any transition is considered valid if the `main` state
     /// matches, regardless of anything else.
     fn every(self) -> EveryTransition<S, Self, Marker> {
@@ -214,12 +271,29 @@ pub trait StateMatcher<S: States, Marker>: InternalStateMatcher<S, Marker> {
     ) -> CombineStateMatchers<S, Self, Marker, Sm, M2> {
         CombineStateMatchers(self, other, PhantomData)
     }
+
+    /// Evaluates two `StateMatcher`s
+    ///
+    /// If matching a single state, it will return true if both states are true
+    ///
+    /// If matching a transition, it'll return `NoMatch` if either return `NoMatch`.
+    /// Then, it'll return `MainMatches` if either returns `MainMatches`,
+    /// and it'll only reutnr `TransitionMatches` if both return `TransitionMatches`
+    fn and_then<M2, Sm: StateMatcher<S, M2>>(
+        self,
+        other: Sm,
+    ) -> AndStateMatchers<S, Self, Marker, Sm, M2> {
+        AndStateMatchers(self, other, PhantomData)
+    }
 }
 
-impl<S: States, Marker, Sm: InternalStateMatcher<S, Marker>> StateMatcher<S, Marker> for Sm {}
+impl<S: MatchableState, Marker, Sm: InternalStateMatcher<S, Marker>> StateMatcher<S, Marker>
+    for Sm
+{
+}
 
 /// Define a state matcher using a single state conditional
-pub(crate) trait SingleStateMatcher<S: States, Marker: sealed::Marker>:
+pub(crate) trait SingleStateMatcher<S: MatchableState, Marker: sealed::Marker>:
     Send + Sync + Sized + 'static
 {
     /// Check whether to match with the current state
@@ -227,14 +301,14 @@ pub(crate) trait SingleStateMatcher<S: States, Marker: sealed::Marker>:
 }
 
 /// Define a state matcher with custom transition logic
-pub(crate) trait TransitionStateMatcher<S: States, Marker: sealed::Marker>:
+pub(crate) trait TransitionStateMatcher<S: MatchableState, Marker: sealed::Marker>:
     Send + Sync + Sized + 'static
 {
     /// Check whether to match a state transition
     fn match_transition(&self, main: Option<&S>, secondary: Option<&S>) -> MatchesStateTransition;
 }
 
-impl<S: States, M: sealed::Marker, Matcher: SingleStateMatcher<S, M>>
+impl<S: MatchableState, M: sealed::Marker, Matcher: SingleStateMatcher<S, M>>
     InternalStateMatcher<S, sealed::IsSingleStateMatcher<M>> for Matcher
 {
     fn match_state(&self, state: &S) -> bool {
@@ -259,7 +333,7 @@ impl<S: States, M: sealed::Marker, Matcher: SingleStateMatcher<S, M>>
     }
 }
 
-impl<S: States, M: sealed::Marker, Matcher: TransitionStateMatcher<S, M>>
+impl<S: MatchableState, M: sealed::Marker, Matcher: TransitionStateMatcher<S, M>>
     InternalStateMatcher<S, sealed::IsTransitionMatcher<M>> for Matcher
 {
     fn match_state(&self, state: &S) -> bool {
@@ -275,13 +349,13 @@ impl<S: States, M: sealed::Marker, Matcher: TransitionStateMatcher<S, M>>
     }
 }
 
-impl<S: States> SingleStateMatcher<S, sealed::IsState> for S {
+impl<S: MatchableState> SingleStateMatcher<S, sealed::IsState> for S {
     fn match_single_state(&self, state: &S) -> bool {
         state == self
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(&S) -> bool>
+impl<S: MatchableState, F: 'static + Send + Sync + Fn(&S) -> bool>
     SingleStateMatcher<S, sealed::IsFn<sealed::StateRef, sealed::BoolReturn>> for F
 {
     fn match_single_state(&self, state: &S) -> bool {
@@ -289,7 +363,7 @@ impl<S: States, F: 'static + Send + Sync + Fn(&S) -> bool>
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(Option<&S>) -> bool>
+impl<S: MatchableState, F: 'static + Send + Sync + Fn(Option<&S>) -> bool>
     InternalStateMatcher<S, sealed::IsFn<sealed::OptStateRef, sealed::BoolReturn>> for F
 {
     fn match_state(&self, state: &S) -> bool {
@@ -312,7 +386,7 @@ impl<S: States, F: 'static + Send + Sync + Fn(Option<&S>) -> bool>
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(&S, &S) -> MatchesStateTransition>
+impl<S: MatchableState, F: 'static + Send + Sync + Fn(&S, &S) -> MatchesStateTransition>
     InternalStateMatcher<
         S,
         sealed::IsFn<(sealed::StateRef, sealed::StateRef), sealed::TransitionReturn>,
@@ -337,7 +411,10 @@ impl<S: States, F: 'static + Send + Sync + Fn(&S, &S) -> MatchesStateTransition>
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(&S, Option<&S>) -> MatchesStateTransition>
+impl<
+        S: MatchableState,
+        F: 'static + Send + Sync + Fn(&S, Option<&S>) -> MatchesStateTransition,
+    >
     InternalStateMatcher<
         S,
         sealed::IsFn<(sealed::StateRef, sealed::OptStateRef), sealed::TransitionReturn>,
@@ -360,7 +437,7 @@ impl<S: States, F: 'static + Send + Sync + Fn(&S, Option<&S>) -> MatchesStateTra
 }
 
 impl<
-        S: States,
+        S: MatchableState,
         F: 'static + Send + Sync + Fn(Option<&S>, Option<&S>) -> MatchesStateTransition,
     >
     TransitionStateMatcher<
@@ -373,7 +450,7 @@ impl<
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(&S, &S) -> bool>
+impl<S: MatchableState, F: 'static + Send + Sync + Fn(&S, &S) -> bool>
     InternalStateMatcher<S, sealed::IsFn<(sealed::StateRef, sealed::StateRef), sealed::BoolReturn>>
     for F
 {
@@ -396,7 +473,7 @@ impl<S: States, F: 'static + Send + Sync + Fn(&S, &S) -> bool>
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(&S, Option<&S>) -> bool>
+impl<S: MatchableState, F: 'static + Send + Sync + Fn(&S, Option<&S>) -> bool>
     InternalStateMatcher<
         S,
         sealed::IsFn<(sealed::StateRef, sealed::OptStateRef), sealed::BoolReturn>,
@@ -424,7 +501,7 @@ impl<S: States, F: 'static + Send + Sync + Fn(&S, Option<&S>) -> bool>
     }
 }
 
-impl<S: States, F: 'static + Send + Sync + Fn(Option<&S>, Option<&S>) -> bool>
+impl<S: MatchableState, F: 'static + Send + Sync + Fn(Option<&S>, Option<&S>) -> bool>
     InternalStateMatcher<
         S,
         sealed::IsFn<(sealed::OptStateRef, sealed::OptStateRef), sealed::BoolReturn>,
@@ -448,10 +525,10 @@ impl<S: States, F: 'static + Send + Sync + Fn(Option<&S>, Option<&S>) -> bool>
     }
 }
 
-impl<S: States, M: 'static, Sm: StateMatcher<S, M>> IntoSystem<(), bool, (S, M)> for Sm {
-    type System = StateMatcherSystem<S, M, Sm>;
-
-    fn into_system(this: Self) -> Self::System {
+impl<S: MatchableState, M: 'static, Sm: StateMatcher<S, M>> From<Sm>
+    for StateMatcherSystem<S, M, Sm>
+{
+    fn from(value: Sm) -> Self {
         let system = IntoSystem::into_system(
             move |main: Option<Res<State<S>>>, transition: Option<Res<ActiveTransition<S>>>| {
                 if let Some(transition) = transition.as_ref().map(|v| v.as_ref()) {
@@ -461,28 +538,30 @@ impl<S: States, M: 'static, Sm: StateMatcher<S, M>> IntoSystem<(), bool, (S, M)>
                     if main == secondary {
                         false
                     } else {
-                        let result = this.match_state_transition(main, secondary);
+                        let result = value.match_state_transition(main, secondary);
                         result == MatchesStateTransition::TransitionMatches
                     }
                 } else if let Some(main) = main {
-                    this.match_state(main.get())
+                    value.match_state(main.get())
                 } else {
                     false
                 }
             },
         );
-        StateMatcherSystem(Box::new(system), PhantomData)
+        Self(Box::new(system), PhantomData)
     }
 }
 
 /// A system type for `StateMatcher`s
 /// Allows them to be used as `Condition`s directly
-pub struct StateMatcherSystem<S: States, M: 'static, Sm: StateMatcher<S, M>>(
-    Box<dyn crate::prelude::ReadOnlySystem<In = (), Out = bool>>,
+pub struct StateMatcherSystem<S: MatchableState, M: 'static, Sm: StateMatcher<S, M>>(
+    Box<dyn bevy::prelude::ReadOnlySystem<In = (), Out = bool>>,
     PhantomData<fn() -> (S, M, Sm)>,
 );
 
-impl<S: States, M: 'static, Sm: StateMatcher<S, M>> System for StateMatcherSystem<S, M, Sm> {
+impl<S: MatchableState, M: 'static, Sm: StateMatcher<S, M>> System
+    for StateMatcherSystem<S, M, Sm>
+{
     type In = ();
 
     type Out = bool;
@@ -511,15 +590,16 @@ impl<S: States, M: 'static, Sm: StateMatcher<S, M>> System for StateMatcherSyste
         self.0.is_exclusive()
     }
 
+    /// # SAFETY: Passing through to `FunctionSystem`'s implementation
     unsafe fn run_unsafe(&mut self, input: Self::In, world: UnsafeWorldCell) -> Self::Out {
         self.0.run_unsafe(input, world)
     }
 
-    fn apply_deferred(&mut self, world: &mut crate::prelude::World) {
+    fn apply_deferred(&mut self, world: &mut World) {
         self.0.apply_deferred(world);
     }
 
-    fn initialize(&mut self, world: &mut crate::prelude::World) {
+    fn initialize(&mut self, world: &mut World) {
         self.0.initialize(world);
     }
 
@@ -527,38 +607,37 @@ impl<S: States, M: 'static, Sm: StateMatcher<S, M>> System for StateMatcherSyste
         self.0.update_archetype_component_access(world);
     }
 
-    fn check_change_tick(&mut self, change_tick: crate::component::Tick) {
+    fn check_change_tick(&mut self, change_tick: component::Tick) {
         self.0.check_change_tick(change_tick);
     }
 
-    fn get_last_run(&self) -> crate::component::Tick {
+    fn get_last_run(&self) -> component::Tick {
         self.0.get_last_run()
     }
 
-    fn set_last_run(&mut self, last_run: crate::component::Tick) {
+    fn set_last_run(&mut self, last_run: component::Tick) {
         self.0.set_last_run(last_run);
     }
 }
 
-/// SAFETY: The boxed system is must be a read only system
-unsafe impl<S: States, M: 'static, Sm: StateMatcher<S, M>> ReadOnlySystem
+/// # SAFETY: The boxed system is must be a read only system
+unsafe impl<S: MatchableState, M: 'static, Sm: StateMatcher<S, M>> ReadOnlySystem
     for StateMatcherSystem<S, M, Sm>
 {
 }
 
 #[cfg(test)]
 mod tests {
-    use bevy_ecs_macros::state_matches;
-
-    use crate as bevy_ecs;
-    use crate::schedule::ActiveTransition;
-    use crate::system::{IntoSystem, System};
-    use crate::{
-        schedule::{MatchesStateTransition, State, States},
+    use crate as bevy_state_matching_prototype;
+    use crate::*;
+    use bevy::ecs::{
+        schedule::{State, States},
+        system::System,
         world::World,
     };
 
     use super::sealed::InternalStateMatcher;
+    use bevy_state_matching_prototype_macros::state_matches;
 
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
     enum TestState {
@@ -836,7 +915,7 @@ mod tests {
 
         let match_state_value = state_matches!(TestState, C(_));
 
-        let mut system = IntoSystem::into_system(match_state_value);
+        let mut system: StateMatcherSystem<_, _, _> = match_state_value.into();
 
         system.initialize(&mut world);
         world.insert_resource(State::new(TestState::C(true)));
@@ -858,7 +937,7 @@ mod tests {
 
         let match_state_value = state_matches!(TestState, every C(_));
 
-        let mut system = IntoSystem::into_system(match_state_value);
+        let mut system: StateMatcherSystem<_, _, _> = match_state_value.into();
 
         system.initialize(&mut world);
         world.insert_resource(State::new(TestState::C(true)));
@@ -887,9 +966,9 @@ mod tests {
         let match_state_value = state_matches!(TestState, C(_), every |_: &TestState| true);
         let match_state_value_alt = state_matches!(TestState, =only_c, every |_: &TestState| true);
 
-        let mut system = IntoSystem::into_system(match_state_value);
+        let mut system: StateMatcherSystem<_, _, _> = match_state_value.into();
 
-        let mut system_alt = IntoSystem::into_system(match_state_value_alt);
+        let mut system_alt: StateMatcherSystem<_, _, _> = match_state_value_alt.into();
 
         system.initialize(&mut world);
         system_alt.initialize(&mut world);

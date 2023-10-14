@@ -1,9 +1,7 @@
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::mem;
-use std::ops::Deref;
 
-use bevy::prelude::*;
+use bevy::{ecs::schedule::ScheduleLabel, prelude::*};
 
 use super::state_matching::{MatchesStateTransition, StateMatcher};
 
@@ -13,7 +11,7 @@ use super::state_matching::{MatchesStateTransition, StateMatcher};
 /// Multiple states can be defined for the same world,
 /// allowing you to classify the state of the world across orthogonal dimensions.
 /// You can access the current state of type `T` with the [`State<T>`] resource,
-/// and the queued state with the [`NextState<T>`] resource.
+/// and the queued state with the [`NextMatchableState<T>`] resource.
 ///
 /// State transitions typically occur in the [`OnEnter<T>`] and [`OnExit<T>`] schedules,
 /// which can be run via the [`apply_state_transition::<T>`] system.
@@ -23,7 +21,7 @@ use super::state_matching::{MatchesStateTransition, StateMatcher};
 /// States are commonly defined as simple enums, with the [`States`] derive macro.
 ///
 /// ```rust
-/// use bevy_ecs::prelude::States;
+/// use bevy::prelude::States;
 ///
 /// #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
 /// enum GameState {
@@ -38,7 +36,7 @@ use super::state_matching::{MatchesStateTransition, StateMatcher};
 /// However, states can also be structs:
 ///
 /// ```rust
-/// use bevy_ecs::prelude::States;
+/// use bevy::prelude::States;
 ///
 /// #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
 /// struct Level(u32);
@@ -48,7 +46,7 @@ use super::state_matching::{MatchesStateTransition, StateMatcher};
 /// This can be useful for complex state machines to ensure that invalid states are unrepresentable.
 ///
 /// ```rust {
-/// use bevy_ecs::prelude::States;
+/// use bevy::prelude::States;
 ///
 /// #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
 /// enum AppState {
@@ -71,7 +69,7 @@ use super::state_matching::{MatchesStateTransition, StateMatcher};
 ///     MultiPlayer,
 /// }
 /// ```
-pub trait States: bevy::ecs::schedule::States {
+pub trait MatchableState: bevy::ecs::schedule::States {
     /// Matches the state using one of the following:
     ///
     /// - A value of Self, checking for equality
@@ -104,7 +102,7 @@ pub trait States: bevy::ecs::schedule::States {
     }
 }
 
-impl<S: bevy::ecs::schedule::States> States for S {}
+impl<S: bevy::ecs::schedule::States> MatchableState for S {}
 
 /// A schedule that runs whenever any state is entered.
 /// This occurs either:
@@ -133,9 +131,9 @@ pub struct Exiting;
     derive(bevy::reflect::Reflect),
     reflect(Resource, Default)
 )]
-pub(crate) struct ActiveTransition<S: States>(Option<S>, Option<S>);
+pub(crate) struct ActiveTransition<S: MatchableState>(Option<S>, Option<S>);
 
-impl<S: States> ActiveTransition<S> {
+impl<S: MatchableState> ActiveTransition<S> {
     pub(crate) fn new(main: Option<S>, secondary: Option<S>) -> Self {
         Self(main, secondary)
     }
@@ -160,30 +158,23 @@ impl<S: States> ActiveTransition<S> {
 /// To queue a transition, just set the contained value to `Some(next_state)`.
 /// Note that these transitions can be overridden by other systems:
 /// only the actual value of this resource at the time of [`apply_state_transition`] matters.
-#[derive(Resource, Default)]
-#[cfg_attr(
-    feature = "bevy_reflect",
-    derive(bevy::reflect::Reflect),
-    reflect(Resource, Default)
-)]
-pub enum NextState<S: States> {
+#[derive(Resource, Default, bevy::reflect::Reflect)]
+#[reflect(Resource, Default)]
+pub enum NextMatchableState<S: MatchableState> {
     /// Do not change the state.
     #[default]
     Keep,
     /// Change the state to a specific, pre-determined value
     Value(S),
     /// Change the state to a value determined by the given closure
-    Setter(
-        #[cfg_attr(feature = "bevy_reflect", reflect(ignore, default = "default_setter"))]
-        Box<dyn Fn(S) -> S + Sync + Send>,
-    ),
+    Setter(#[reflect(ignore, default = "default_setter")] Box<dyn Fn(S) -> S + Sync + Send>),
 }
 
-fn default_setter<S: States>() -> Box<dyn Fn(S) -> S + Sync + Send> {
+fn default_setter<S: MatchableState>() -> Box<dyn Fn(S) -> S + Sync + Send> {
     Box::new(|state: S| state)
 }
 
-impl<S: States> Debug for NextState<S> {
+impl<S: MatchableState> Debug for NextMatchableState<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Keep => write!(f, "Keep"),
@@ -193,7 +184,7 @@ impl<S: States> Debug for NextState<S> {
     }
 }
 
-impl<S: States> NextState<S> {
+impl<S: MatchableState> NextMatchableState<S> {
     /// Tentatively set a planned state transition to `Some(state)`.
     pub fn set(&mut self, state: S) {
         *self = Self::Value(state);
@@ -203,7 +194,8 @@ impl<S: States> NextState<S> {
     /// # Example
     ///
     /// ```
-    /// # use bevy_ecs::prelude::*;
+    /// # use bevy::prelude::*;
+    /// # use bevy_state_matching_prototype::NextMatchableState;
     /// # let mut app = Schedule::default();
     /// # let mut world = World::new();
     ///
@@ -217,11 +209,11 @@ impl<S: States> NextState<S> {
     /// }
     ///
     /// world.init_resource::<State<GameState>>();
-    /// world.init_resource::<NextState<GameState>>();
+    /// world.init_resource::<NextMatchableState<GameState>>();
     ///
-    /// app.add_systems((toggle_pause, apply_state_transition::<GameState>).chain());
+    /// app.add_systems((toggle_pause, bevy_state_matching_prototype::apply_state_transition::<GameState>).chain());
     ///
-    /// fn toggle_pause(mut next_state: ResMut<NextState<GameState>>) {
+    /// fn toggle_pause(mut next_state: ResMut<NextMatchableState<GameState>>) {
     ///   next_state.setter(|s| match &s {
     ///     GameState::Playing { paused} => GameState::Playing { paused: !paused },
     ///     _ => s
@@ -246,7 +238,7 @@ impl<S: States> NextState<S> {
 }
 
 /// Run the enter schedule (if it exists) for the current state.
-pub fn run_enter_schedule<S: States>(world: &mut World) {
+pub fn run_enter_schedule<S: MatchableState>(world: &mut World) {
     let Some(state) = world.get_resource::<State<S>>().map(|s| s.get().clone()) else {
         return;
     };
@@ -256,22 +248,22 @@ pub fn run_enter_schedule<S: States>(world: &mut World) {
     world.remove_resource::<ActiveTransition<S>>();
 }
 
-/// If a new state is queued in [`NextState<S>`], this system:
-/// - Takes the new state value from [`NextState<S>`] and updates [`State<S>`].
+/// If a new state is queued in [`NextMatchableState<S>`], this system:
+/// - Takes the new state value from [`NextMatchableState<S>`] and updates [`State<S>`].
 /// - Runs the [`OnExit(exited_state)`] and [`Exiting`] schedules, if they exist.
 /// - Runs the [`OnTransition { from: exited_state, to: entered_state }`](OnTransition) schedule, if they exist.
 /// - Runs the [`OnEnter(entered_state)`] and [`Entering`] schedules, if they exist.
-pub fn apply_state_transition<S: States>(world: &mut World) {
-    let Some(next_state_resource) = world.get_resource::<NextState<S>>() else {
+pub fn apply_state_transition<S: MatchableState>(world: &mut World) {
+    let Some(next_state_resource) = world.get_resource::<NextMatchableState<S>>() else {
         return;
     };
     let Some(current_state) = world.get_resource::<State<S>>().map(|s| s.get().clone()) else {
         return;
     };
     let entered = match next_state_resource {
-        NextState::Keep => None,
-        NextState::Value(v) => Some(v.clone()),
-        NextState::Setter(f) => Some(f(current_state.clone())),
+        NextMatchableState::Keep => None,
+        NextMatchableState::Value(v) => Some(v.clone()),
+        NextMatchableState::Setter(f) => Some(f(current_state.clone())),
     };
     if let Some(entered) = entered {
         if current_state != entered {
@@ -295,6 +287,6 @@ pub fn apply_state_transition<S: States>(world: &mut World) {
             world.remove_resource::<ActiveTransition<S>>();
         }
 
-        world.insert_resource(NextState::<S>::Keep);
+        world.insert_resource(NextMatchableState::<S>::Keep);
     }
 }
