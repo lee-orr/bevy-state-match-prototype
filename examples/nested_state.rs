@@ -21,7 +21,7 @@ fn main() {
         .add_systems(Startup, setup)
         // You need to register a state type for it to be usable in the app.
         // This sets up all the necessary systems, schedules & resources in the background.
-        .add_state::<AppState>()
+        .add_matchable_state::<AppState>()
         // This system runs when we enter `AppState::Menu`, during the `StateTransition` schedule.
         // All systems from the exit schedule of the state we're leaving are run first,
         // and then all systems from the enter schedule of the state we're entering are run second.
@@ -189,7 +189,7 @@ fn setup_game(
         return;
     }
     commands.spawn(SpriteBundle {
-        texture: asset_server.load("branding/icon.png"),
+        texture: asset_server.load("icon.png"),
         ..default()
     });
 }

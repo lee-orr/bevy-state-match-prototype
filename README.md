@@ -1,5 +1,7 @@
 # Bevy State Matching Prototype
 
+![Bevy Logo State Matching Variant](/assets/icon.png)
+
 This crate is an implementation of the [State Pattern Matching - Alternative](https://github.com/bevyengine/bevy/pull/10088) PR as a third party crate, to provide access to test out the feature in `0.12` before it gets merged in for, hopefully, `0.13`.
 
 NOTE: much of the code is directly copied and pasted from the Bevy repository, and while I implemented the changes in the PR - there are many others who were involved in creating the original code. As such, despite this being a 3rd party repository, I'd consider all the code here to be Bevy's rather than mine - I'm just providing early access to this API.
