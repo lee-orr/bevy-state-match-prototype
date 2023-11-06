@@ -20,6 +20,6 @@ To install, you currently need to specify the github repo in `Cargo.toml`:
 
 ```toml
 [dependencies]
-bevy = { git = "https://github.com/bevyengine/bevy" },
+bevy = "0.12",
 bevy_state_matching_prototype = { git = "https://github.com/lee-orr/bevy-state-match-prototype" }
 ```
