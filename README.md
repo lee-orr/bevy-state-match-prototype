@@ -1,3 +1,6 @@
+> [!CAUTION]
+> This Repository is no longer maintained, as the associated PR has been closed. It's archived to prevent breaking dependent projects, but should not be used.
+---
 # Bevy State Matching Prototype
 
 ![Bevy Logo State Matching Variant](/assets/icon.png)
